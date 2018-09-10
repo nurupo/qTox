@@ -26,7 +26,10 @@
 # - Doesn't build qTox updater, because it wasn't ported to cmake yet and
 #   because it requires static Qt, which means we'd need to build Qt twice, and
 #   building Qt takes really long time.
-
+#
+# - FFmpeg 3.3 doesn't cross-compile correctly, qTox build fails when linking
+#   against the 3.3 FFmpeg. They have removed `--enable-memalign-hack` switch,
+#   which might be what causes this. Further research needed.
 
 set -euo pipefail
 
@@ -430,8 +433,8 @@ fi
 # FFmpeg
 
 FFMPEG_PREFIX_DIR="$DEP_DIR/libffmpeg"
-FFMPEG_VERSION=4.0.1
-FFMPEG_HASH="605f5c01c60db35d3b617a79cabb2c7032412be243554602eeed1b628125c0ee"
+FFMPEG_VERSION=3.2.10
+FFMPEG_HASH="3c1626220c7b68ff6be7312559f77f3c65ff6809daf645d4470ac0189926bdbc"
 FFMPEG_FILENAME="ffmpeg-$FFMPEG_VERSION.tar.xz"
 if [ ! -f "$FFMPEG_PREFIX_DIR/done" ]
 then
@@ -466,7 +469,7 @@ then
               --disable-programs \
               --disable-protocols \
               --disable-doc \
-              --disable-sdl2 \
+              --disable-sdl \
               --disable-avfilter \
               --disable-avresample \
               --disable-filters \
@@ -501,7 +504,8 @@ then
               --enable-parser=mjpeg \
               --enable-decoder=h264 \
               --enable-decoder=mjpeg \
-              --enable-decoder=rawvideo
+              --enable-decoder=rawvideo \
+              --enable-memalign-hack
   make
   make install
   echo -n $FFMPEG_VERSION > $FFMPEG_PREFIX_DIR/done
@@ -804,6 +808,42 @@ else
 fi
 
 
+# x264
+
+X264_PREFIX_DIR="$DEP_DIR/x264"
+X264_VERSION="snapshot-20180909-2245"
+X264_HASH="3ba5d1baf4e0d84bedcdea50f6c8807d5cb76786917f37a414d56759f1a96295"
+X264_FILENAME="x264-$X264_VERSION.tar.bz2"
+if [ ! -f "$X264_PREFIX_DIR/done" ]
+then
+  rm -rf "$X264_PREFIX_DIR"
+  mkdir -p "$X264_PREFIX_DIR"
+
+  wget "ftp://ftp.videolan.org/pub/videolan/x264/snapshots/$X264_FILENAME"
+  check_sha256 "$X264_HASH" "$X264_FILENAME"
+  bsdtar --no-same-owner --no-same-permissions -xf "$X264_FILENAME"
+  rm $X264_FILENAME
+  cd x264*
+
+  CFLAGS="-O2 -g0" ./configure \
+                               --host="$ARCH-w64-mingw32" \
+                               --cross-prefix="$ARCH-w64-mingw32-" \
+                               --prefix="$X264_PREFIX_DIR" \
+                               --enable-static \
+                               --disable-cli
+                               #--disable-asm
+
+  make
+  make install
+  echo -n $X264_VERSION > $X264_PREFIX_DIR/done
+
+  cd ..
+  rm -rf ./x264*
+else
+  echo "Using cached build of x264 `cat $X264_PREFIX_DIR/done`"
+fi
+
+
 # Sodium
 
 SODIUM_PREFIX_DIR="$DEP_DIR/libsodium"
@@ -884,24 +924,20 @@ fi
 # Toxcore
 
 TOXCORE_PREFIX_DIR="$DEP_DIR/libtoxcore"
-TOXCORE_VERSION=0.2.3
-TOXCORE_HASH=22c52f286c46d3f802edb6978bcf2a53f8301363e2b745784613427a33ba3a34
-TOXCORE_FILENAME="c-toxcore-$TOXCORE_VERSION.tar.gz"
+TOXCORE_VERSION=master
 if [ ! -f "$TOXCORE_PREFIX_DIR/done" ]
 then
   rm -rf "$TOXCORE_PREFIX_DIR"
   mkdir -p "$TOXCORE_PREFIX_DIR"
 
-  wget https://github.com/TokTok/c-toxcore/archive/v$TOXCORE_VERSION.tar.gz -O $TOXCORE_FILENAME
-  check_sha256 "$TOXCORE_HASH" "$TOXCORE_FILENAME"
-  bsdtar --no-same-owner --no-same-permissions -xf "$TOXCORE_FILENAME"
-  rm "$TOXCORE_FILENAME"
-  cd c-toxcore*
+  git clone  https://github.com/Zoxcore/c-toxcore c-toxcore
+  cd c-toxcore
+  git checkout $TOXCORE_VERSION
 
   mkdir -p build
   cd build
 
-  export PKG_CONFIG_PATH="$OPUS_PREFIX_DIR/lib/pkgconfig:$SODIUM_PREFIX_DIR/lib/pkgconfig:$VPX_PREFIX_DIR/lib/pkgconfig"
+  export PKG_CONFIG_PATH="$OPUS_PREFIX_DIR/lib/pkgconfig:$SODIUM_PREFIX_DIR/lib/pkgconfig:$VPX_PREFIX_DIR/lib/pkgconfig:$X264_PREFIX_DIR/lib/pkgconfig:$FFMPEG_PREFIX_DIR/lib/pkgconfig"
   export PKG_CONFIG_LIBDIR="/usr/$ARCH-w64-mingw32"
 
   echo "
@@ -911,13 +947,16 @@ then
       SET(CMAKE_CXX_COMPILER $ARCH-w64-mingw32-g++)
       SET(CMAKE_RC_COMPILER $ARCH-w64-mingw32-windres)
 
-      SET(CMAKE_FIND_ROOT_PATH /usr/$ARCH-w64-mingw32 $OPUS_PREFIX_DIR $SODIUM_PREFIX_DIR $VPX_PREFIX_DIR)
+      SET(CMAKE_FIND_ROOT_PATH /usr/$ARCH-w64-mingw32 $OPUS_PREFIX_DIR $SODIUM_PREFIX_DIR $VPX_PREFIX_DIR $X264_PREFIX_DIR $FFMPEG_PREFIX_DIR)
   " > toolchain.cmake
 
   cmake -DCMAKE_INSTALL_PREFIX=$TOXCORE_PREFIX_DIR \
         -DBOOTSTRAP_DAEMON=OFF \
         -DWARNINGS=OFF \
-        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DBUILD_TOXAV=ON \
+        -DMUST_BUILD_TOXAV=ON \
+        -DCMAKE_C_FLAGS="-g3 -gdwarf-2" \
         -DENABLE_STATIC=ON \
         -DENABLE_SHARED=OFF \
         -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
