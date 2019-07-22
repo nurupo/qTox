@@ -4,10 +4,10 @@ language: cpp
 cache: ccache
 
 # regex is for release tags
-branches:
-  only:
-    - master
-    - /^v(\d+\.){2}\d+$/
+#branches:
+#  only:
+#    - master
+#    - /^v(\d+\.){2}\d+$/
 
 stages:
   - Linux
@@ -20,7 +20,7 @@ stages:
 
 env:
   global:
-    - CIRP_GITHUB_REPO_SLUG="qTox/qTox-nightly-releases"
+    - CIRP_GITHUB_REPO_SLUG="nurupo/qTox-nightly-releases2"
 
 jobs:
   include:
@@ -186,7 +186,6 @@ jobs:
       services:
         - docker
     - stage: "Nightly publishing"
-      if: type == cron
       script:
         - export ARTIFACTS_DIR="$(mktemp -d)"
         - .travis/cirp/collect.sh "$ARTIFACTS_DIR"
