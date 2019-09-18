@@ -429,7 +429,8 @@ EOF
 
   ./configure --host="$ARCH-w64-mingw32" \
               --prefix="$SQLCIPHER_PREFIX_DIR" \
-              --disable-shared \
+              --enable-shared \
+              --disable-static \
               --enable-tempstore=yes \
               CFLAGS="-O2 -g0 -DSQLITE_HAS_CODEC -I$OPENSSL_PREFIX_DIR/include/" \
               LDFLAGS="$OPENSSL_PREFIX_DIR/lib/libcrypto.a -lcrypto -lgdi32 -L$OPENSSL_PREFIX_DIR/lib/"
@@ -478,11 +479,11 @@ then
               --target-os="mingw32" \
               --cross-prefix="$ARCH-w64-mingw32-" \
               --pkg-config="pkg-config" \
-              --extra-cflags="-static -O2 -g0" \
-              --extra-ldflags="-lm -static" \
-              --pkg-config-flags="--static" \
+              --extra-cflags="-O2 -g0" \
+              --extra-ldflags="-lm" \
               --disable-debug \
-              --disable-shared \
+              --enable-shared \
+              --disable-static \
               --disable-programs \
               --disable-protocols \
               --disable-doc \
@@ -626,7 +627,7 @@ then
   git checkout $FILTERAUDIO_VERSION
   check_sha256_git "$FILTERAUDIO_HASH"
 
-  $ARCH-w64-mingw32-gcc -O2 -g0 -c \
+  $ARCH-w64-mingw32-gcc -O2 -g0 -fPIC -c \
                aec/aec_core.c \
                aec/aec_core_sse2.c \
                aec/aec_rdft.c \
@@ -678,7 +679,7 @@ then
                -lpthread \
                -lm
 
-  ar rcs libfilteraudio.a \
+  $ARCH-w64-mingw32-gcc -shared \
     aec_core.o \
     aec_core_sse2.o \
     aec_rdft.o \
@@ -726,12 +727,13 @@ then
     webrtc_vad.o \
     vad_gmm.o \
     vad_filterbank.o \
-    filter_audio.o
+    filter_audio.o \
+    -o libfilteraudio.dll
 
   mkdir $FILTERAUDIO_PREFIX_DIR/include
-  mkdir $FILTERAUDIO_PREFIX_DIR/lib
+  mkdir $FILTERAUDIO_PREFIX_DIR/bin
   cp filter_audio.h $FILTERAUDIO_PREFIX_DIR/include
-  cp libfilteraudio.a $FILTERAUDIO_PREFIX_DIR/lib
+  cp libfilteraudio.dll $FILTERAUDIO_PREFIX_DIR/bin
   echo -n $FILTERAUDIO_VERSION > $FILTERAUDIO_PREFIX_DIR/done
 
   cd ..
@@ -760,8 +762,8 @@ then
 
   CFLAGS="-O2 -g0" ./configure --host="$ARCH-w64-mingw32" \
                                --prefix="$QRENCODE_PREFIX_DIR" \
-                               --disable-shared \
-                               --enable-static \
+                               --enable-shared \
+                               --disable-static \
                                --disable-sdltest \
                                --without-tools \
                                --without-debug
@@ -795,8 +797,8 @@ then
 
   CFLAGS="-O2 -g0" ./configure --host="$ARCH-w64-mingw32" \
                                --prefix="$EXIF_PREFIX_DIR" \
-                               --disable-shared \
-                               --enable-static \
+                               --enable-shared \
+                               --disable-static \
                                --disable-docs \
                                --disable-nls
   make
@@ -830,8 +832,8 @@ then
 
   CFLAGS="-O2 -g0" ./configure --host="$ARCH-w64-mingw32" \
                                --prefix="$OPUS_PREFIX_DIR" \
-                               --disable-shared \
-                               --enable-static \
+                               --enable-shared \
+                               --disable-static \
                                --disable-extra-programs \
                                --disable-doc
   make
@@ -864,8 +866,8 @@ then
 
   ./configure --host="$ARCH-w64-mingw32" \
               --prefix="$SODIUM_PREFIX_DIR" \
-              --disable-shared \
-              --enable-static \
+              --enable-shared \
+              --disable-static \
               --with-pic
   make
   make install
@@ -895,6 +897,180 @@ then
   rm $VPX_FILENAME
   cd libvpx*
 
+# https://github.com/msys2/MINGW-packages/tree/e32963a1d530aa2e45bfa067a731f2fd7dff91ae/mingw-w64-libvpx/0001-enable-shared-on.mingw.patch
+> 0001-enable-shared-on.mingw.patch cat << "EOF"
+diff -aur libvpx-1.6.0-orig/build/make/configure.sh libvpx-1.6.0/build/make/configure.sh
+--- libvpx-1.6.0-orig/build/make/configure.sh	2016-07-21 04:15:41.000000000 +0300
++++ libvpx-1.6.0/build/make/configure.sh	2016-07-28 18:34:25.287546800 +0300
+@@ -647,7 +647,10 @@
+       --libdir=*)
+         libdir="${optval}"
+         ;;
+-      --libc|--as|--prefix|--libdir)
++      --bindir=*)
++        bindir="${optval}"
++        ;;
++      --libc|--as|--prefix|--libdir|--bindir)
+         die "Option ${opt} requires argument"
+         ;;
+       --help|-h)
+@@ -618,9 +621,14 @@
+   prefix="${prefix%/}"
+   libdir="${libdir:-${prefix}/lib}"
+   libdir="${libdir%/}"
++  bindir="${bindir:-${prefix}/bin}"
++  bindir="${bindir%/}"
+   if [ "${libdir#${prefix}}" = "${libdir}" ]; then
+     die "Libdir ${libdir} must be a subdirectory of ${prefix}"
+   fi
++  if [ "${bindir#${prefix}}" = "${bindir}" ]; then
++    die "Bindir ${bindir} must be a subdirectory of ${prefix}"
++  fi
+ }
+
+ post_process_cmdline() {
+diff -aur libvpx-1.6.0-orig/build/make/Makefile libvpx-1.6.0/build/make/Makefile
+--- libvpx-1.6.0-orig/build/make/Makefile	2016-07-21 04:15:41.000000000 +0300
++++ libvpx-1.6.0/build/make/Makefile	2016-07-28 18:34:25.287546800 +0300
+@@ -300,6 +300,20 @@
+             $$(filter %.o,$$^) $$(extralibs)
+ endef
+
++define dll_gnu_template
++# Not using a pattern rule here because we don't want to generate empty
++# archives when they are listed as a dependency in files not responsible
++# for creating them.
++#
++# This needs further abstraction for dealing with non-GNU linkers.
++$(1):
++	$(if $(quiet),@echo "    [LD] $$@")
++	$(qexec)$$(LD) -shared $$(LDFLAGS) \
++            -Wl,--no-undefined \
++            -o $$@ \
++            -Wl,--out-implib=$$(subst $(2),.dll.a,$(1)) $$(filter %.o,$$^) $$(extralibs)
++endef
++
+ define dl_template
+ # Not using a pattern rule here because we don't want to generate empty
+ # archives when they are listed as a dependency in files not responsible
+@@ -383,6 +397,7 @@
+ $(foreach lib,$(filter %so.$(SO_VERSION_MAJOR).$(SO_VERSION_MINOR).$(SO_VERSION_PATCH),$(LIBS)),$(eval $(call so_template,$(lib))))
+ $(foreach lib,$(filter %$(SO_VERSION_MAJOR).dylib,$(LIBS)),$(eval $(call dl_template,$(lib))))
+ $(foreach lib,$(filter %$(SO_VERSION_MAJOR).dll,$(LIBS)),$(eval $(call dll_template,$(lib))))
++$(foreach lib,$(filter %-$(VERSION_MAJOR).dll,$(LIBS)),$(eval $(call dll_gnu_template,$(lib),-$(VERSION_MAJOR).dll)))
+
+ INSTALL-LIBS=$(call cond_enabled,CONFIG_INSTALL_LIBS,INSTALL-LIBS)
+ ifeq ($(MAKECMDGOALS),dist)
+Only in libvpx-1.6.0/build/make: Makefile.orig
+diff -aur libvpx-1.6.0-orig/configure libvpx-1.6.0/configure
+--- libvpx-1.6.0-orig/configure	2016-07-21 04:15:41.000000000 +0300
++++ libvpx-1.6.0/configure	2016-07-28 18:37:36.879364800 +0300
+@@ -473,6 +473,7 @@
+ DIST_DIR?=\$(DESTDIR)${prefix}
+ endif
+ LIBSUBDIR=${libdir##${prefix}/}
++BINSUBDIR=${bindir##${prefix}/}
+
+ VERSION_STRING=${VERSION_STRING}
+
+@@ -510,9 +511,13 @@
+             ;;
+         *)
+             if enabled gnu; then
+-                echo "--enable-shared is only supported on ELF; assuming this is OK"
++                echo "--enable-shared is only supported on ELF and PE; assuming this is OK"
++            elif enabled win32; then
++                echo "--enable-shared is only supported on ELF and PE; assuming this is OK"
++            elif enabled win64; then
++                echo "--enable-shared is only supported on ELF and PE; assuming this is OK"
+             else
+-                die "--enable-shared only supported on ELF, OS/2, and Darwin for now"
++                die "--enable-shared only supported on ELF, OS/2, Darwin and PE for now"
+             fi
+             ;;
+         esac
+diff -aur libvpx-1.6.0-orig/examples.mk libvpx-1.6.0/examples.mk
+--- libvpx-1.6.0-orig/examples.mk	2016-07-21 04:15:41.000000000 +0300
++++ libvpx-1.6.0/examples.mk	2016-07-28 18:34:25.303172800 +0300
+@@ -302,9 +302,13 @@
+ ifneq ($(filter os2%,$(TGT_OS)),)
+ SHARED_LIB_SUF=_dll.a
+ else
++ifneq ($(filter win%,$(TGT_OS)),)
++SHARED_LIB_SUF=.dll.a
++else
+ SHARED_LIB_SUF=.so
+ endif
+ endif
++endif
+ CODEC_LIB_SUF=$(if $(CONFIG_SHARED),$(SHARED_LIB_SUF),.a)
+ $(foreach bin,$(BINS-yes),\
+     $(eval $(bin):$(LIB_PATH)/lib$(CODEC_LIB)$(CODEC_LIB_SUF))\
+diff -aur libvpx-1.6.0-orig/libs.mk libvpx-1.6.0/libs.mk
+--- libvpx-1.6.0-orig/libs.mk	2016-07-21 04:15:41.000000000 +0300
++++ libvpx-1.6.0/libs.mk	2016-07-28 18:34:25.303172800 +0300
+@@ -130,6 +130,7 @@
+ INSTALL_MAPS += include/vpx/% $(SRC_PATH_BARE)/vpx/%
+ INSTALL_MAPS += include/vpx/% $(SRC_PATH_BARE)/vpx_ports/%
+ INSTALL_MAPS += $(LIBSUBDIR)/%     %
++INSTALL_MAPS += $(BINSUBDIR)/%     %
+ INSTALL_MAPS += src/%     $(SRC_PATH_BARE)/%
+ ifeq ($(CONFIG_MSVS),yes)
+ INSTALL_MAPS += $(foreach p,$(VS_PLATFORMS),$(LIBSUBDIR)/$(p)/%  $(p)/Release/%)
+@@ -252,6 +253,13 @@
+ LIBVPX_SO_SYMLINKS      :=
+ LIBVPX_SO_IMPLIB        := libvpx_dll.a
+ else
++ifeq ($(filter win%,$(TGT_OS)),$(TGT_OS))
++LIBVPX_SO               := libvpx-$(VERSION_MAJOR).dll
++SHARED_LIB_SUF          := .dll.a
++EXPORT_FILE             :=
++LIBVPX_SO_SYMLINKS      :=
++LIBVPX_SO_IMPLIB        := libvpx.dll.a
++else
+ LIBVPX_SO               := libvpx.so.$(SO_VERSION_MAJOR).$(SO_VERSION_MINOR).$(SO_VERSION_PATCH)
+ SHARED_LIB_SUF          := .so
+ EXPORT_FILE             := libvpx.ver
+@@ -261,13 +269,14 @@
+ endif
+ endif
+ endif
++endif
+
+ LIBS-$(CONFIG_SHARED) += $(BUILD_PFX)$(LIBVPX_SO)\
+                            $(notdir $(LIBVPX_SO_SYMLINKS)) \
+                            $(if $(LIBVPX_SO_IMPLIB), $(BUILD_PFX)$(LIBVPX_SO_IMPLIB))
+ $(BUILD_PFX)$(LIBVPX_SO): $(LIBVPX_OBJS) $(EXPORT_FILE)
+ $(BUILD_PFX)$(LIBVPX_SO): extralibs += -lm
+-$(BUILD_PFX)$(LIBVPX_SO): SONAME = libvpx.so.$(SO_VERSION_MAJOR)
++$(BUILD_PFX)$(LIBVPX_SO): SONAME = $(LIBVPX_SO)
+ $(BUILD_PFX)$(LIBVPX_SO): EXPORTS_FILE = $(EXPORT_FILE)
+
+ libvpx.ver: $(call enabled,CODEC_EXPORTS)
+@@ -295,6 +304,10 @@
+ 	$(qexec)emximp -o $@ $<
+ CLEAN-OBJS += libvpx_dll.a
+
++libvpx.dll.a: $(LIBVPX_SO)
++	@echo "    [IMPLIB] $@"
++CLEAN-OBJS += libvpx.dll.a
++
+ define libvpx_symlink_template
+ $(1): $(2)
+ 	@echo "    [LN]     $(2) $$@"
+@@ -311,7 +324,7 @@
+
+
+ INSTALL-LIBS-$(CONFIG_SHARED) += $(LIBVPX_SO_SYMLINKS)
+-INSTALL-LIBS-$(CONFIG_SHARED) += $(LIBSUBDIR)/$(LIBVPX_SO)
++INSTALL-LIBS-$(CONFIG_SHARED) += $(BINSUBDIR)/$(LIBVPX_SO)
+ INSTALL-LIBS-$(CONFIG_SHARED) += $(if $(LIBVPX_SO_IMPLIB),$(LIBSUBDIR)/$(LIBVPX_SO_IMPLIB))
+
+
+EOF
+
+  patch -Np1 < 0001-enable-shared-on.mingw.patch
+
   if [[ "$ARCH" == "x86_64" ]]
   then
     VPX_TARGET=x86_64-win64-gcc
@@ -911,8 +1087,8 @@ then
   CFLAGS="$VPX_CFLAGS" \
   CROSS="$ARCH-w64-mingw32-" ./configure --target="$VPX_TARGET" \
                                          --prefix="$VPX_PREFIX_DIR" \
-                                         --disable-shared \
-                                         --enable-static \
+                                         --enable-shared \
+                                         --disable-static \
                                          --disable-examples \
                                          --disable-tools \
                                          --disable-docs \
@@ -964,8 +1140,8 @@ then
   cmake -DCMAKE_INSTALL_PREFIX=$TOXCORE_PREFIX_DIR \
         -DBOOTSTRAP_DAEMON=OFF \
         -DCMAKE_BUILD_TYPE=Release \
-        -DENABLE_STATIC=ON \
-        -DENABLE_SHARED=OFF \
+        -DENABLE_STATIC=OFF \
+        -DENABLE_SHARED=ON \
         -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake \
         ..
 
